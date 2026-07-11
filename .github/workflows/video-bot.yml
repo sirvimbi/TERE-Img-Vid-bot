@@ -1,0 +1,41 @@
+name: Video Bot - Auto Post
+
+on:
+  schedule:
+    - cron: '0 9,21 * * *'
+  workflow_dispatch:
+
+jobs:
+  run-video-bot:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v3
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.10'
+    
+    - name: Install rclone
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y rclone
+    
+    - name: Install Python dependencies
+      run: |
+        pip install --upgrade pip
+        pip install requests moviepy edge-tts gspread oauth2client python-dotenv Pillow
+    
+    - name: Create temp directory
+      run: mkdir -p temp
+    
+    - name: Run video bot
+      env:
+        BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+        GOOGLE_SERVICE_ACCOUNT: service_account.json
+      run: python video_bot.py
+    
+    - name: Cleanup temp files
+      run: rm -rf temp/*

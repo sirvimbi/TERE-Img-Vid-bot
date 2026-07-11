@@ -1,0 +1,41 @@
+name: Autonomous Video Bot
+
+on:
+  schedule:
+    # 4:00 AM and 4:00 PM UTC (which is 7:00 AM and 7:00 PM UTC+3)
+    - cron: '0 4,16 * * *'
+  workflow_dispatch: # Allows manual trigger for testing
+
+jobs:
+  post-video:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v3
+
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.13'
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y imagemagick rclone
+          # Fix ImageMagick policy for security
+          sudo sed -i 's/policy domain="path" rights="none" pattern="@\*"/policy domain="path" rights="read|write" pattern="@\*"/g' /etc/ImageMagick-6/policy.xml
+
+      - name: Install Python Libraries
+        run: pip install -r requirements.txt
+
+      - name: Configure RClone
+        run: |
+          mkdir -p ~/.config/rclone
+          echo "${{ secrets.RCLONE_CONFIG }}" > ~/.config/rclone/rclone.conf
+
+      - name: Run Bot
+        env:
+          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+          R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+        run: python video_bot_with_watermark.py
