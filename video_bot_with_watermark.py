@@ -18,7 +18,12 @@ if not hasattr(PIL.Image, 'ANTIALIAS'):
     PIL.Image.ANTIALIAS = PIL.Image.LANCZOS
 
 # Configure MoviePy to use ImageMagick via environment variable
-os.environ["IMAGEMAGICK_BINARY"] = "/opt/homebrew/bin/magick"
+if os.name == 'nt':  # Windows
+    os.environ["IMAGEMAGICK_BINARY"] = r"C:\Program Files\ImageMagick-7.1.1-Q16-HDRI\magick.exe"
+elif os.path.exists("/opt/homebrew/bin/magick"):  # macOS (Homebrew)
+    os.environ["IMAGEMAGICK_BINARY"] = "/opt/homebrew/bin/magick"
+else:  # Linux (GitHub Actions)
+    os.environ["IMAGEMAGICK_BINARY"] = "/usr/bin/convert"
 
 from moviepy.editor import *
 from moviepy.video.VideoClip import ColorClip
