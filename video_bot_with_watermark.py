@@ -244,7 +244,7 @@ def create_video_with_watermark(image_path, text, voice="en-US-JennyNeural", ind
             method='caption',
             size=(image_clip.w * 0.9, None),
             align='center'
-        ).set_position(('center', 0.75), relative=True).set_duration(audio_duration)
+        ).set_position(('center', 0.70), relative=True).set_duration(audio_duration)
         
         main_video = CompositeVideoClip([image_clip, watermark_clip, text_clip]).set_audio(audio_clip)
 
