@@ -40,14 +40,20 @@ BUFFER_API_KEY = os.getenv("BUFFER_API_KEY") or os.getenv("BUFFER_ACCESS_TOKEN")
 BUFFER_URL = "https://api.buffer.com"
 
 # Load profile IDs
-try:
-    with open('profile_ids.json', 'r') as f:
-        profiles = json.load(f)
-    BUFFER_PROFILES = [p['id'] for p in profiles]
-    print(f"📋 Found profiles: {BUFFER_PROFILES}")
-except FileNotFoundError:
-    print("⚠️ profile_ids.json not found")
-    BUFFER_PROFILES = []
+BUFFER_PROFILES = []
+env_profiles = os.getenv("BUFFER_PROFILE_IDS")
+if env_profiles:
+    BUFFER_PROFILES = [pid.strip() for pid in env_profiles.split(",") if pid.strip()]
+    print(f"📋 Loaded profiles from Env: {BUFFER_PROFILES}")
+
+if not BUFFER_PROFILES:
+    try:
+        with open('profile_ids.json', 'r') as f:
+            profiles = json.load(f)
+        BUFFER_PROFILES = [p['id'] for p in profiles]
+        print(f"📋 Loaded profiles from File: {BUFFER_PROFILES}")
+    except FileNotFoundError:
+        print("⚠️ profile_ids.json not found")
 
 SPREADSHEET_ID = "1dLZKzpnVrJp8HVGo6x5FoJw3Sk5K0wPxX-aQ5F5PrBI"
 SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT", "service_account.json")
@@ -400,9 +406,16 @@ def main():
         elif os.path.exists("/usr/bin/convert"):
             os.environ["IMAGEMAGICK_BINARY"] = "/usr/bin/convert"
 
+    if not BUFFER_PROFILES:
+        print("❌ No Buffer profiles found. Exiting.")
+        return
+
     sheet_instance, records = get_data_from_sheets()
     if not records:
+        print("❌ No records found in Google Sheet or auth failed. Exiting.")
         return
+
+    print(f"📊 Total records found: {len(records)}")
 
     # Process exactly ONE unposted row
     for idx, row in enumerate(records, 1):
@@ -414,7 +427,9 @@ def main():
                 return 
             else:
                 print(f"❌ Failed to process row {idx}. Stopping.")
-                return
+                # We return code 1 to let GitHub know it failed
+                import sys
+                sys.exit(1)
                 
     print("🎉 All rows in the sheet have already been posted!")
 
