@@ -1,0 +1,42 @@
+name: Agnes AI Video Bot
+
+on:
+  schedule:
+    # 1:00 AM and 1:00 PM UTC (which is 4:00 AM and 4:00 PM UTC+3)
+    # Staggered with the main bot to avoid overlapping heavy CPU tasks
+    - cron: '0 1,13 * * *'
+  workflow_dispatch:
+
+jobs:
+  post-video:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.13'
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y imagemagick rclone
+          sudo sed -i 's/policy domain="path" rights="none" pattern="@\*"/policy domain="path" rights="read|write" pattern="@\*"/g' /etc/ImageMagick-6/policy.xml
+
+      - name: Install Python Libraries
+        run: pip install -r requirements.txt
+
+      - name: Configure RClone
+        run: |
+          mkdir -p ~/.config/rclone
+          echo "${{ secrets.RCLONE_CONFIG }}" > ~/.config/rclone/rclone.conf
+
+      - name: Run Agnes Bot
+        env:
+          BUFFER_API_KEY: ${{ secrets.BUFFER_API_KEY }}
+          BUFFER_PROFILE_IDS: ${{ secrets.BUFFER_PROFILE_IDS }}
+          R2_PUBLIC_BASE_URL: ${{ secrets.R2_PUBLIC_BASE_URL }}
+          GOOGLE_CREDS_JSON: ${{ secrets.GOOGLE_CREDS_JSON }}
+        run: python agnes_bot.py
