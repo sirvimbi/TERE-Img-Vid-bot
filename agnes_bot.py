@@ -5,6 +5,7 @@ import asyncio
 import time
 import sys
 import re
+import subprocess
 from datetime import datetime
 from dotenv import load_dotenv
 import gspread
