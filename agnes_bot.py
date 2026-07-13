@@ -4,6 +4,7 @@ import json
 import asyncio
 import time
 import sys
+import re
 from datetime import datetime
 from dotenv import load_dotenv
 import gspread
@@ -41,11 +42,22 @@ AGNES_BASE_URL = "https://apihub.agnes-ai.com/v1"
 # BUFFER API
 BUFFER_API_KEY = os.getenv("BUFFER_API_KEY") or os.getenv("BUFFER_ACCESS_TOKEN") or "2ZUR6pZhjVC3CDsSGy3lQBBLn3LmZ61d7-e_KgqjSfM"
 BUFFER_URL = "https://api.buffer.com"
-BUFFER_PROFILE_IDS = [
-    "6a53866180cc80cdcaa5f066", # Instagram
-    "6a522ee0404834462894dfbf", # TikTok
-    "6a5380ff80cc80cdcaa5d2bf"  # Facebook
-]
+
+# Load profile IDs
+BUFFER_PROFILES = []
+env_profiles = os.getenv("BUFFER_PROFILE_IDS")
+if env_profiles:
+    BUFFER_PROFILES = [pid.strip() for pid in env_profiles.split(",") if pid.strip()]
+    print(f"📋 Loaded profiles from Env: {BUFFER_PROFILES}")
+
+if not BUFFER_PROFILES:
+    # Manual fallback with the IDs we just found
+    BUFFER_PROFILES = [
+        "6a53866180cc80cdcaa5f066", # Instagram
+        "6a522ee0404834462894dfbf", # TikTok
+        "6a5380ff80cc80cdcaa5d2bf"  # Facebook
+    ]
+    print(f"📋 Using hardcoded profiles: {BUFFER_PROFILES}")
 
 # GOOGLE SHEETS
 SPREADSHEET_ID = "1dLZKzpnVrJp8HVGo6x5FoJw3Sk5K0wPxX-aQ5F5PrBI"
@@ -112,6 +124,27 @@ def update_row_status(sheet_instance, idx, row, status_text):
 # AGNES AI LOGIC
 # ============================
 
+def find_video_url_recursive(data):
+    """Deeply search for any .mp4 URL in the response data"""
+    if isinstance(data, str) and (data.startswith("http") and ".mp4" in data):
+        return data
+    if isinstance(data, dict):
+        # Specific check for known nested fields
+        for key in ["video_url", "url", "output", "data"]:
+            val = data.get(key)
+            if val:
+                found = find_video_url_recursive(val)
+                if found: return found
+        # Fallback loop
+        for k, v in data.items():
+            found = find_video_url_recursive(v)
+            if found: return found
+    if isinstance(data, list):
+        for item in data:
+            found = find_video_url_recursive(item)
+            if found: return found
+    return None
+
 def generate_agnes_video(prompt):
     """Submit task to Agnes AI and poll for result"""
     print(f"🎨 Submitting video task to Agnes AI...")
@@ -136,7 +169,7 @@ def generate_agnes_video(prompt):
         video_id = response.json().get("video_id")
         print(f"⏳ Task submitted! Video ID: {video_id}. Polling for result...")
         
-        # Polling loop (max 15 minutes for high fidelity)
+        # Polling loop (max 15 minutes)
         max_retries = 90 
         for i in range(max_retries):
             time.sleep(10)
@@ -145,27 +178,27 @@ def generate_agnes_video(prompt):
             
             if res.status_code == 200:
                 data = res.json()
-                status = data.get("status", "").lower()
+                status = (data.get("status") or data.get("internal_status") or "").lower()
                 
-                if status == "completed":
-                    # Check both video_url and data field
-                    video_url = data.get("video_url") or data.get("data", {}).get("video_url")
+                if status == "completed" or data.get("progress") == 100:
+                    video_url = find_video_url_recursive(data)
+                    
                     if video_url:
                         print(f"✅ Video ready: {video_url}")
                         return video_url
                     else:
-                        print(f"⚠️ Status completed but URL missing. Full response: {data}")
+                        print(f"⚠️ Status completed but URL missing. Full response keys: {list(data.keys())}")
                         return None
                 elif status == "failed":
                     print(f"❌ Agnes Generation Failed: {data.get('error') or data.get('message')}")
                     return None
                 else:
-                    if i % 3 == 0: # Print status every 30s
+                    if i % 3 == 0:
                         print(f"⏳ Status: {status} ({i*10}s elapsed)...")
             else:
                 print(f"⚠️ Polling error {res.status_code}: {res.text}")
                 
-        print("❌ Polling timed out after 15 minutes.")
+        print("❌ Polling timed out.")
         return None
     except Exception as e:
         print(f"❌ Agnes API Exception: {e}")
@@ -213,8 +246,13 @@ def add_overlays_and_outro(input_video_path, caption_text, index):
         outro_duration = 3
         background = ColorClip(size=(video.w, video.h), color=(26, 26, 46)).set_duration(outro_duration)
         
-        if os.path.exists(LOGO_PATH):
-            logo_clip = ImageClip(LOGO_PATH).resize(width=video.w * 0.6).set_duration(outro_duration).set_position('center')
+        # Ensure logo is available
+        current_logo_path = LOGO_PATH
+        if not os.path.exists(current_logo_path):
+            print(f"📥 Logo not found locally. Using placeholder.")
+
+        if os.path.exists(current_logo_path):
+            logo_clip = ImageClip(current_logo_path).resize(width=video.w * 0.6).set_duration(outro_duration).set_position('center')
             download_text = TextClip("Download Now", fontsize=60, color='white', font=font_path).set_duration(outro_duration).set_position(('center', 0.8), relative=True)
             outro = CompositeVideoClip([background, logo_clip, download_text])
         else:
@@ -251,7 +289,7 @@ def post_to_buffer(video_url, caption):
     """
     
     success_count = 0
-    for profile_id in BUFFER_PROFILE_IDS:
+    for profile_id in BUFFER_PROFILES:
         metadata = {}
         if profile_id == "6a53866180cc80cdcaa5f066": # Instagram
             metadata = {"instagram": {"type": "reel", "shouldShareToFeed": True}}
@@ -284,6 +322,13 @@ def main():
     print("🚀 Agnes AI Video Bot Initialized")
     os.makedirs("temp", exist_ok=True)
     
+    # Configure ImageMagick for Cloud
+    if os.name != 'nt':
+        if os.path.exists("/usr/bin/magick"):
+            os.environ["IMAGEMAGICK_BINARY"] = "/usr/bin/magick"
+        elif os.path.exists("/usr/bin/convert"):
+            os.environ["IMAGEMAGICK_BINARY"] = "/usr/bin/convert"
+
     sheet_instance, records = get_data_from_sheet2()
     if not records: return
 
@@ -302,15 +347,15 @@ def main():
         if video_url == "ERROR_POLICY":
             update_row_status(sheet_instance, idx, row, "Failed: Policy")
             print("🛑 Stopping to prevent further policy violations.")
-            return # EXIT AFTER ONE FAILURE
+            return 
         
         if video_url == "ERROR_RATE_LIMIT":
-            print("⏳ Rate limit hit. Exiting to retry tomorrow.")
-            return # EXIT
+            print("⏳ Rate limit hit. Exiting.")
+            return 
             
         if not video_url or video_url == "ERROR_SUBMISSION":
             print("❌ Submission failed. Exiting.")
-            return # EXIT
+            return 
 
         # 2. Download and Process
         temp_input = f"temp/agnes_raw_{idx}.mp4"
@@ -334,8 +379,8 @@ def main():
         public_url = upload_to_r2(processed_path)
         if public_url and post_to_buffer(public_url, caption_text):
             update_row_status(sheet_instance, idx, row, "Posted")
-            print("🎉 Successfully posted. Exiting loop as per '1 post per day' rule.")
-            return # SUCCESSFUL EXIT
+            print("🎉 Successfully posted. Exiting loop.")
+            return
 
         print("❌ Final posting failed. Exiting.")
         return
