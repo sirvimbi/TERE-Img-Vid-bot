@@ -262,10 +262,11 @@ def main():
     if not records: return
 
     for idx, row in enumerate(records, 1):
-        status = row.get('Status', '').strip().lower()
+        # Flexible header detection
+        status = (row.get('Status') or row.get('status') or '').strip().lower()
         if status == 'posted': continue
         
-        prompt = row.get('VideoPrompt', '').strip()
+        prompt = (row.get('VideoPrompt') or row.get('Full AI Video Prompt (10 sec)') or '').strip()
         if not prompt: continue
         
         print(f"\n🎬 Processing Row {idx} from Sheet 2...")
@@ -288,13 +289,24 @@ def main():
         if public_url and post_to_buffer(public_url, caption_text):
             # 4. Mark Status
             try:
-                # Find Status column
-                headers = [h.lower() for h in row.keys()]
-                status_col = headers.index('status') + 1
+                # Find Status column or append one
+                headers = list(row.keys())
+                status_col = -1
+                for i, h in enumerate(headers, 1):
+                    if h.lower() == 'status':
+                        status_col = i
+                        break
+                
+                if status_col == -1:
+                    status_col = len(headers) + 1
+                    # Update header if it's the first time
+                    if idx == 1:
+                        sheet_instance.update_cell(1, status_col, "Status")
+
                 sheet_instance.update_cell(idx + 1, status_col, "Posted")
                 print(f"✅ Row {idx} marked as Posted in Sheet 2.")
-            except:
-                print("⚠️ Failed to update sheet status.")
+            except Exception as e:
+                print(f"⚠️ Failed to update sheet status: {e}")
             
             # Exit after one successful post per run
             return

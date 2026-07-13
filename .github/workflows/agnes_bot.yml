@@ -2,9 +2,8 @@ name: Agnes AI Video Bot
 
 on:
   schedule:
-    # 1:00 AM and 1:00 PM UTC (which is 4:00 AM and 4:00 PM UTC+3)
-    # Staggered with the main bot to avoid overlapping heavy CPU tasks
-    - cron: '0 1,13 * * *'
+    # 9:00 AM UTC is 12:00 PM (Noon) UTC+3
+    - cron: '0 9 * * *'
   workflow_dispatch:
 
 jobs:
