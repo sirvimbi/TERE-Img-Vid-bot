@@ -51,14 +51,14 @@ if env_profiles:
     BUFFER_PROFILES = [pid.strip() for pid in env_profiles.split(",") if pid.strip()]
     print(f"📋 Loaded profiles from Env: {BUFFER_PROFILES}")
 
-if not BUFFER_PROFILES:
-    # Manual fallback with the IDs we just found
+if len(BUFFER_PROFILES) < 3:
+    # Always include all three unless fully specified in environment
     BUFFER_PROFILES = [
         "6a53866180cc80cdcaa5f066", # Instagram
         "6a522ee0404834462894dfbf", # TikTok
         "6a5380ff80cc80cdcaa5d2bf"  # Facebook
     ]
-    print(f"📋 Using hardcoded profiles: {BUFFER_PROFILES}")
+    print(f"📋 Standardizing on all 3 profiles: {BUFFER_PROFILES}")
 
 # GOOGLE SHEETS
 SPREADSHEET_ID = "1dLZKzpnVrJp8HVGo6x5FoJw3Sk5K0wPxX-aQ5F5PrBI"
