@@ -47,13 +47,13 @@ if env_profiles:
     print(f"📋 Loaded profiles from Env: {BUFFER_PROFILES}")
 
 if not BUFFER_PROFILES:
-    try:
-        with open('profile_ids.json', 'r') as f:
-            profiles = json.load(f)
-        BUFFER_PROFILES = [p['id'] for p in profiles]
-        print(f"📋 Loaded profiles from File: {BUFFER_PROFILES}")
-    except FileNotFoundError:
-        print("⚠️ profile_ids.json not found")
+    # Manual fallback with the IDs we just found
+    BUFFER_PROFILES = [
+        "6a53866180cc80cdcaa5f066", # Instagram
+        "6a522ee0404834462894dfbf", # TikTok
+        "6a5380ff80cc80cdcaa5d2bf"  # Facebook
+    ]
+    print(f"📋 Using hardcoded profiles: {BUFFER_PROFILES}")
 
 SPREADSHEET_ID = "1dLZKzpnVrJp8HVGo6x5FoJw3Sk5K0wPxX-aQ5F5PrBI"
 SERVICE_ACCOUNT_FILE = os.getenv("GOOGLE_SERVICE_ACCOUNT", "service_account.json")
