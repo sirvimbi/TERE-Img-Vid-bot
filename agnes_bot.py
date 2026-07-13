@@ -3,6 +3,7 @@ import requests
 import json
 import asyncio
 import time
+import sys
 from datetime import datetime
 from dotenv import load_dotenv
 import gspread
@@ -66,7 +67,6 @@ PLAYSTORE_LINK = "https://play.google.com/store/apps/details?id=com.Tere"
 
 def get_data_from_sheet2():
     try:
-        # Auth logic similar to video_bot.py
         env_creds = os.getenv("GOOGLE_CREDS_JSON")
         if env_creds:
             creds_dict = json.loads(env_creds)
@@ -86,12 +86,27 @@ def get_data_from_sheet2():
             print("❌ No Google credentials found.")
             return None, []
         
-        # Open Sheet 2
-        sheet = client.open_by_key(SPREADSHEET_ID).get_worksheet(1) # Index 1 is the second sheet
+        sheet = client.open_by_key(SPREADSHEET_ID).get_worksheet(1)
         return sheet, sheet.get_all_records()
     except Exception as e:
         print(f"❌ Error reading Sheet 2: {e}")
         return None, []
+
+def update_row_status(sheet_instance, idx, row, status_text):
+    """Mark a row with a specific status in the Google Sheet"""
+    try:
+        headers = [h.lower() for h in row.keys()]
+        if 'status' in headers:
+            status_col = headers.index('status') + 1
+        else:
+            status_col = len(headers) + 1
+            if idx == 1:
+                sheet_instance.update_cell(1, status_col, "Status")
+        
+        sheet_instance.update_cell(idx + 1, status_col, status_text)
+        print(f"✅ Row {idx} marked as '{status_text}' in Sheet 2.")
+    except Exception as e:
+        print(f"⚠️ Failed to update sheet status: {e}")
 
 # ============================
 # AGNES AI LOGIC
@@ -110,16 +125,21 @@ def generate_agnes_video(prompt):
     try:
         response = requests.post(f"{AGNES_BASE_URL}/videos", json=payload, headers=headers)
         if response.status_code != 200:
-            print(f"❌ Agnes Task Submission Failed: {response.text}")
-            return None
+            resp_text = response.text
+            print(f"❌ Agnes Task Submission Failed: {resp_text}")
+            if "content_policy_violation" in resp_text:
+                return "ERROR_POLICY"
+            if "rate_limit_exceeded" in resp_text:
+                return "ERROR_RATE_LIMIT"
+            return "ERROR_SUBMISSION"
         
         video_id = response.json().get("video_id")
         print(f"⏳ Task submitted! Video ID: {video_id}. Polling for result...")
         
-        # Polling loop
-        max_retries = 60 # 5 minutes max
+        # Polling loop (max 15 minutes for high fidelity)
+        max_retries = 90 
         for i in range(max_retries):
-            time.sleep(10) # Poll every 10 seconds
+            time.sleep(10)
             poll_url = f"https://apihub.agnes-ai.com/agnesapi?video_id={video_id}"
             res = requests.get(poll_url, headers=headers)
             
@@ -128,25 +148,31 @@ def generate_agnes_video(prompt):
                 status = data.get("status", "").lower()
                 
                 if status == "completed":
-                    video_url = data.get("video_url")
-                    print(f"✅ Video ready: {video_url}")
-                    return video_url
+                    # Check both video_url and data field
+                    video_url = data.get("video_url") or data.get("data", {}).get("video_url")
+                    if video_url:
+                        print(f"✅ Video ready: {video_url}")
+                        return video_url
+                    else:
+                        print(f"⚠️ Status completed but URL missing. Full response: {data}")
+                        return None
                 elif status == "failed":
-                    print(f"❌ Agnes Generation Failed: {data.get('error')}")
+                    print(f"❌ Agnes Generation Failed: {data.get('error') or data.get('message')}")
                     return None
                 else:
-                    print(f"⏳ Status: {status} ({i*10}s elapsed)...")
+                    if i % 3 == 0: # Print status every 30s
+                        print(f"⏳ Status: {status} ({i*10}s elapsed)...")
             else:
-                print(f"⚠️ Polling warning: {res.status_code}")
+                print(f"⚠️ Polling error {res.status_code}: {res.text}")
                 
-        print("❌ Polling timed out.")
+        print("❌ Polling timed out after 15 minutes.")
         return None
     except Exception as e:
-        print(f"❌ Agnes API Error: {e}")
+        print(f"❌ Agnes API Exception: {e}")
         return None
 
 # ============================
-# VIDEO PROCESSING (Subtitles & Outro)
+# VIDEO PROCESSING
 # ============================
 
 def add_overlays_and_outro(input_video_path, caption_text, index):
@@ -156,7 +182,7 @@ def add_overlays_and_outro(input_video_path, caption_text, index):
     try:
         video = VideoFileClip(input_video_path)
         
-        # 1. Subtitles (Simple White)
+        # Subtitles
         chunks = []
         words = caption_text.split()
         chunk = []
@@ -183,7 +209,7 @@ def add_overlays_and_outro(input_video_path, caption_text, index):
         
         main_video = CompositeVideoClip([video, text_clip])
 
-        # 2. Outro
+        # Outro
         outro_duration = 3
         background = ColorClip(size=(video.w, video.h), color=(26, 26, 46)).set_duration(outro_duration)
         
@@ -203,7 +229,7 @@ def add_overlays_and_outro(input_video_path, caption_text, index):
         return None
 
 # ============================
-# BUFFER & R2 LOGIC
+# BUFFER & R2
 # ============================
 
 def upload_to_r2(local_path):
@@ -247,7 +273,7 @@ def post_to_buffer(video_url, caption):
             print(f"✅ Posted to {profile_id}")
             success_count += 1
         else:
-            print(f"❌ Failed to post to {profile_id}: {res.text}")
+            print(f"❌ Failed to post to {profile_id}")
     return success_count > 0
 
 # ============================
@@ -262,56 +288,59 @@ def main():
     if not records: return
 
     for idx, row in enumerate(records, 1):
-        # Flexible header detection
         status = (row.get('Status') or row.get('status') or '').strip().lower()
-        if status == 'posted': continue
+        if status in ['posted', 'failed: policy']: continue
         
-        prompt = (row.get('VideoPrompt') or row.get('Full AI Video Prompt (10 sec)') or '').strip()
+        prompt = (row.get('Full AI Video Prompt (10 sec)') or row.get('VideoPrompt') or '').strip()
         if not prompt: continue
         
         print(f"\n🎬 Processing Row {idx} from Sheet 2...")
         
         # 1. Agnes Generation
         video_url = generate_agnes_video(prompt)
-        if not video_url: continue
         
+        if video_url == "ERROR_POLICY":
+            update_row_status(sheet_instance, idx, row, "Failed: Policy")
+            print("🛑 Stopping to prevent further policy violations.")
+            return # EXIT AFTER ONE FAILURE
+        
+        if video_url == "ERROR_RATE_LIMIT":
+            print("⏳ Rate limit hit. Exiting to retry tomorrow.")
+            return # EXIT
+            
+        if not video_url or video_url == "ERROR_SUBMISSION":
+            print("❌ Submission failed. Exiting.")
+            return # EXIT
+
         # 2. Download and Process
         temp_input = f"temp/agnes_raw_{idx}.mp4"
-        with open(temp_input, 'wb') as f:
-            f.write(requests.get(video_url).content)
-        
-        # Use the "BenefitFocus" or "VideoPrompt" snippet for captions
+        try:
+            r = requests.get(video_url, stream=True)
+            with open(temp_input, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+        except Exception as e:
+            print(f"❌ Download failed: {e}")
+            return
+
         caption_text = row.get('BenefitFocus', prompt[:100])
         processed_path = add_overlays_and_outro(temp_input, caption_text, idx)
         
+        if not processed_path:
+            print("❌ Video processing failed. Exiting.")
+            return
+
         # 3. Host and Post
         public_url = upload_to_r2(processed_path)
         if public_url and post_to_buffer(public_url, caption_text):
-            # 4. Mark Status
-            try:
-                # Find Status column or append one
-                headers = list(row.keys())
-                status_col = -1
-                for i, h in enumerate(headers, 1):
-                    if h.lower() == 'status':
-                        status_col = i
-                        break
-                
-                if status_col == -1:
-                    status_col = len(headers) + 1
-                    # Update header if it's the first time
-                    if idx == 1:
-                        sheet_instance.update_cell(1, status_col, "Status")
+            update_row_status(sheet_instance, idx, row, "Posted")
+            print("🎉 Successfully posted. Exiting loop as per '1 post per day' rule.")
+            return # SUCCESSFUL EXIT
 
-                sheet_instance.update_cell(idx + 1, status_col, "Posted")
-                print(f"✅ Row {idx} marked as Posted in Sheet 2.")
-            except Exception as e:
-                print(f"⚠️ Failed to update sheet status: {e}")
-            
-            # Exit after one successful post per run
-            return
+        print("❌ Final posting failed. Exiting.")
+        return
 
-    print("🎉 All rows in Sheet 2 are posted!")
+    print("🎉 All rows in Sheet 2 are already processed!")
 
 if __name__ == "__main__":
     main()
