@@ -333,6 +333,9 @@ def main():
     sheet_instance, records = get_data_from_sheet2()
     if not records: return
 
+    policy_violation_count = 0
+    max_policy_violations = 3
+
     for idx, row in enumerate(records, 1):
         status = (row.get('Status') or row.get('status') or '').strip().lower()
         if status in ['posted', 'failed: policy']: continue
@@ -347,46 +350,50 @@ def main():
         
         if video_url == "ERROR_POLICY":
             update_row_status(sheet_instance, idx, row, "Failed: Policy")
-            print("🛑 Stopping to prevent further policy violations.")
-            return 
+            policy_violation_count += 1
+            if policy_violation_count >= max_policy_violations:
+                print(f"🛑 Reached limit of {max_policy_violations} policy violations. Stopping to prevent account flag.")
+                return
+            print("⚠️ Moving to next row due to policy violation.")
+            continue # TRY NEXT ROW
         
         if video_url == "ERROR_RATE_LIMIT":
-            print("⏳ Rate limit hit. Exiting.")
+            print("⏳ Rate limit hit. Exiting to retry tomorrow.")
             return 
             
         if not video_url or video_url == "ERROR_SUBMISSION":
-            print("❌ Submission failed. Exiting.")
-            return 
+            print(f"❌ Submission failed for row {idx}. Trying next row...")
+            continue # Try next row instead of exiting completely
 
         # 2. Download and Process
         temp_input = f"temp/agnes_raw_{idx}.mp4"
         try:
-            r = requests.get(video_url, stream=True)
+            r = requests.get(video_url, stream=True, timeout=60)
             with open(temp_input, 'wb') as f:
                 for chunk in r.iter_content(chunk_size=8192):
                     f.write(chunk)
         except Exception as e:
-            print(f"❌ Download failed: {e}")
-            return
+            print(f"❌ Download failed for row {idx}: {e}. Trying next row...")
+            continue
 
         caption_text = row.get('BenefitFocus', prompt[:100])
         processed_path = add_overlays_and_outro(temp_input, caption_text, idx)
         
         if not processed_path:
-            print("❌ Video processing failed. Exiting.")
-            return
+            print(f"❌ Video processing failed for row {idx}. Trying next row...")
+            continue
 
         # 3. Host and Post
         public_url = upload_to_r2(processed_path)
         if public_url and post_to_buffer(public_url, caption_text):
             update_row_status(sheet_instance, idx, row, "Posted")
-            print("🎉 Successfully posted. Exiting loop.")
+            print("🎉 Successfully posted. Task complete for today!")
             return
 
-        print("❌ Final posting failed. Exiting.")
-        return
+        print(f"❌ Final posting failed for row {idx}. Trying next row...")
+        continue
 
-    print("🎉 All rows in Sheet 2 are already processed!")
+    print("🎉 All rows in Sheet 2 are already processed or failed!")
 
 if __name__ == "__main__":
     main()
