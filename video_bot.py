@@ -327,7 +327,9 @@ def post_to_buffer(video_url, text):
         if profile_id == "6a53866180cc80cdcaa5f066": # Instagram
             metadata = {"instagram": {"type": "reel", "shouldShareToFeed": True}}
         elif profile_id == "6a5380ff80cc80cdcaa5d2bf": # Facebook
-            metadata = {"facebook": {"type": "reel"}}
+            # Using 'post' type because 'reel' is currently returning an 'Invalid post' error
+            # Buffer will still often treat vertical videos as Reels automatically on FB
+            metadata = {"facebook": {"type": "post"}}
 
         variables = {
             "input": {
