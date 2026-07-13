@@ -322,13 +322,21 @@ def post_to_buffer(video_url, text):
     
     success = False
     for profile_id in BUFFER_PROFILES:
+        # Determine metadata based on profile ID
+        metadata = {}
+        if profile_id == "6a53866180cc80cdcaa5f066": # Instagram
+            metadata = {"instagram": {"type": "reel", "shouldShareToFeed": True}}
+        elif profile_id == "6a5380ff80cc80cdcaa5d2bf": # Facebook
+            metadata = {"facebook": {"type": "reel"}}
+
         variables = {
             "input": {
                 "text": caption,
                 "channelId": profile_id,
                 "schedulingType": "automatic",
                 "mode": "addToQueue",
-                "assets": [{"video": {"url": video_url}}]
+                "assets": [{"video": {"url": video_url}}],
+                "metadata": metadata
             }
         }
         try:
